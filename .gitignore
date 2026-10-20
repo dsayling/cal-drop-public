@@ -1,0 +1,11 @@
+.local/
+__pycache__/
+*.pyc
+config.local.json
+probe-report.json
+calendar.json
+export-diagnostics.json
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+.DS_Store
