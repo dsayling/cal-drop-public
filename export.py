@@ -143,6 +143,43 @@ def build_snapshot(db_path, days):
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
+def probe_store_access():
+    """Explain a 'no store found' result. A glob that finds nothing
+    cannot tell 'the file is not there' from 'this process is not
+    allowed to look' — and on macOS the second is common: Outlook's
+    group container is privacy-protected, so a launchd-spawned process
+    without Full Disk Access gets an empty glob where the same code in
+    a terminal finds the store. Record what this process can actually
+    see so the diagnostics file names the real cause."""
+    home = os.path.expanduser("~")
+    container = os.path.join(
+        home, "Library", "Group Containers", "UBF8T346G9.Office",
+        "Outlook")
+    profiles = os.path.join(container, "Outlook 15 Profiles")
+    probe = {"home": home, "executable": sys.executable}
+    for label, path in (("container", container), ("profiles", profiles)):
+        entry = {"path": path, "exists": os.path.exists(path)}
+        try:
+            entry["entries"] = len(os.listdir(path))
+        except OSError as exc:
+            entry["list_error"] = "%s: %s" % (type(exc).__name__, exc)
+        probe[label] = entry
+    list_error = probe["profiles"].get("list_error", "")
+    if "PermissionError" in list_error or \
+            "Operation not permitted" in list_error or \
+            "Permission denied" in list_error:
+        probe["hint"] = ("this process is blocked from listing the "
+                         "profiles folder — a privacy (TCC) block, "
+                         "typical for launchd runs without Full Disk "
+                         "Access granted to the python3 in 'executable'")
+    elif not probe["profiles"]["exists"]:
+        probe["hint"] = ("the Outlook profiles folder is not visible to "
+                         "this process at all — either Outlook for Mac "
+                         "has no profile here, or a privacy (TCC) block "
+                         "is hiding the group container from it")
+    return probe
+
+
 def build_snapshot_auto(config, days, db_override=None):
     """Prefer the live HxStore (the new Outlook's store); fall back to
     the legacy SQLite cache. Returns (snapshot|None, diagnostics,
@@ -159,7 +196,8 @@ def build_snapshot_auto(config, days, db_override=None):
         paths = odb.find_db_paths()
         if not paths:
             return None, {"error": "no HxStore.hxd and no Outlook.sqlite "
-                                   "found"}, 2
+                                   "found",
+                          "access_probe": probe_store_access()}, 2
         db_path = paths[0]
     return build_snapshot(db_path, days)
 

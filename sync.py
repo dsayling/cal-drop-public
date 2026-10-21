@@ -146,6 +146,11 @@ def main():
         return code
     with open(snapshot_path, "w") as fh:
         json.dump(snapshot, fh, indent=2)
+    # A success clears the last failure's diagnostics — otherwise the
+    # stale file keeps "reporting" an old error after the fix lands.
+    stale_diag = os.path.join(local_dir, "export-diagnostics.json")
+    if os.path.exists(stale_diag):
+        os.remove(stale_diag)
 
     new_fp = events_fingerprint(snapshot)
     if not force and fetch_current_fingerprint(config) == new_fp:

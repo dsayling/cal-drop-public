@@ -18,6 +18,33 @@ if [ ! -e "$HOME/.ssh/id_ed25519" ] && [ ! -e "$HOME/.ssh/id_rsa" ] && [ -z "${S
   echo "WARNING: no default SSH key found in ~/.ssh — pushes will fail until the GitHub key is in place or loaded in the agent."
 fi
 
+echo
+echo "== dedicated python (for Full Disk Access scoping) =="
+# A venv is not enough: its python is a symlink to the main interpreter,
+# and macOS privacy grants follow the resolved executable path — a grant
+# to .venv/bin/python would really be a grant to the system python.
+# Instead, install a uv-managed Python under .local/uv-python that only
+# cal-drop uses, and grant Full Disk Access to that one binary.
+if command -v uv >/dev/null; then
+  export UV_PYTHON_INSTALL_DIR="$REPO_DIR/.local/uv-python"
+  if uv python install 3.12; then
+    for cand in "$UV_PYTHON_INSTALL_DIR"/cpython-*/bin/python3; do
+      if [ -x "$cand" ]; then
+        RESOLVED="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$cand")"
+        echo "Dedicated python: $RESOLVED"
+        echo "Grant Full Disk Access to THAT file only:"
+        echo "  System Settings > Privacy & Security > Full Disk Access > + > Cmd+Shift+G > paste the path"
+        break
+      fi
+    done
+  else
+    echo "uv python install failed — run.sh will fall back to system python3."
+  fi
+else
+  echo "uv not found — skipping. run.sh will use system python3;"
+  echo "if you grant Full Disk Access, it would have to go to the system python3 itself."
+fi
+
 chmod +x run.sh sync.py export.py probe.py hxprobe.py hxfind.py
 
 PLIST_DST="$HOME/Library/LaunchAgents/com.caldrop.plist"

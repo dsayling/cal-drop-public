@@ -147,6 +147,20 @@ class ExportTests(unittest.TestCase):
         self.assertIn("Roadmap chat", self.titles(snap))
 
 
+class AccessProbeTests(unittest.TestCase):
+    def test_probe_names_what_the_process_can_see(self):
+        probe = exporter.probe_store_access()
+        self.assertIn("executable", probe)
+        self.assertIn("exists", probe["profiles"])
+        # One of the two outcomes must be recorded: entries seen, or the
+        # exact error that stopped the listing.
+        self.assertTrue("entries" in probe["profiles"] or
+                        "list_error" in probe["profiles"])
+        if "list_error" in probe["profiles"] or \
+                not probe["profiles"]["exists"]:
+            self.assertIn("hint", probe)
+
+
 class ProbeTests(unittest.TestCase):
     def test_probe_report_has_schema_and_no_titles(self):
         tmp = tempfile.mkdtemp(prefix="caldrop-probe-")
