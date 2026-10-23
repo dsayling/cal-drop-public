@@ -42,6 +42,8 @@ _TZ_REGIONS = {"Africa", "America", "Antarctica", "Arctic", "Asia",
 _HEX = re.compile(r"^[0-9A-Fa-f]+$")
 _BLOB = re.compile(r"^[A-Za-z0-9+/=_-]{20,}$")
 _GUID = re.compile(r"^[0-9A-Fa-f]{8}-[0-9A-Fa-f-]{27,}$")
+_NAME_RE = re.compile(
+    r"^[A-Za-z .'()`’-]+,\s*[A-Za-z .'()`’-]+$")
 
 
 try:
@@ -112,8 +114,24 @@ def _is_hex_blob(text):
 
 def extract_title(payload):
     """Title per the block string order: the first content string after
-    the hex timezone blob. Fallbacks: first content string that repeats
-    in the record, then the first content string."""
+    the hex timezone blob, unless a better subject candidate repeats.
+
+    Live-record shapes (2026-10 corpus):
+
+    - Plain records: the subject IS the first content string after the
+      blob and appears again after the organizer block.
+    - Exception instances (an edited occurrence of a recurring meeting):
+      the first content string after the blob is the first body/agenda
+      line; the subject appears later, repeated twice — once before the
+      organizer email, once after (see record 2945126656219980196,
+      2026-10-23 09:05 America/Denver, exported as "Updated 10/23
+      Agenda..." before this fix).
+
+    So: among content strings that repeat, prefer the most-repeated
+    one, excluding strings that are attendees, rooms, or boilerplate
+    rather than subjects (name-like "Last, First (X.)", e-mail-bearing,
+    punctuation-only bullets, and all-uppercase room/org codes).
+    Otherwise fall back to the first content string after the blob."""
     strings = [_peel_tz_prefix(text.strip()) for _off, text in
                hxstore.utf16_strings_with_offsets(payload)]
     strings = [s for s in strings if s]
@@ -123,16 +141,36 @@ def extract_title(payload):
             and not _GUID.match(s) and not _BLOB.match(s) \
             and not s.startswith("-----")
 
+    def subject_like(s):
+        if not s.strip() or _GUID.match(s) or _BLOB.match(s):
+            return False
+        if not any(ch.isalpha() and ch.islower() for ch in s):
+            return False  # room/org codes: "FBP3 CR3E (MTR)", "GFLA 111"
+        if s.lower().startswith("microsoft team"):
+            return False
+        # "Last, First (X.Y.)" attendee names repeat across the
+        # organizer and attendee blocks; subjects never look like this.
+        if _NAME_RE.match(s):
+            return False
+        return True
+
+    content_strings = [s for s in strings if content(s)]
+    counts = Counter(s for s in content_strings if subject_like(s))
+    first_idx = {}
+    for i, s in enumerate(content_strings):
+        if s in counts and s not in first_idx:
+            first_idx[s] = i
+    repeated = sorted(
+        (s for s, n in counts.items() if n >= 2),
+        key=lambda s: (-counts[s], first_idx[s]))
+    if repeated:
+        return repeated[0]
     blob_idx = next((i for i, s in enumerate(strings)
                      if _is_hex_blob(s)), None)
     if blob_idx is not None:
         for s in strings[blob_idx + 1:]:
             if content(s):
                 return s
-    counts = Counter(s for s in strings if content(s))
-    repeated = [s for s, n in counts.items() if n >= 2]
-    if repeated:
-        return repeated[0]
     for s in strings:
         if content(s):
             return s

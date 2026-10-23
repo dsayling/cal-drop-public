@@ -98,6 +98,39 @@ class HxExportTests(unittest.TestCase):
         self.assertTrue(hxexport._is_tz("tzone://Microsoft/Utc"))
         self.assertFalse(hxexport._is_tz("Example/Widgets - Weekly Sync"))
 
+    def test_exception_instance_body_line_loses_to_repeated_subject(self):
+        """Regression: an edited (exception) instance of a recurring
+        meeting stores the first body/agenda line as the FIRST content
+        string after the hex timezone blob, with the real subject
+        appearing later — repeated twice (before and after the
+        organizer). The title must be the repeated subject, not the
+        body line. Shape mirrors live record 2945126656219980196
+        (2026-10-23 09:05 America/Denver)."""
+        buf = bytearray(2200)
+        struct.pack_into("<I", buf, 0, 1)
+        struct.pack_into("<I", buf, 4, len(buf) - 4)
+        struct.pack_into("<H", buf, 29, 107)
+        start_t = hxstore._ticks(self.start.astimezone(timezone.utc))
+        end_t = hxstore._ticks(self.end.astimezone(timezone.utc))
+        put_ticks(buf, 483, start_t - 15 * 60 * hxstore.TICKS_PER_SECOND)
+        put_ticks(buf, 603, start_t)
+        put_ticks(buf, 611, end_t)
+        put_utf16(buf, 700, "AB12" * 28)          # hex blob, first string
+        put_utf16(buf, 1100, "Eastern Standard Time")
+        # Body/agenda first line — WRONG title candidate, first content string.
+        put_utf16(buf, 1300, "Updated 10/23 Agenda. Unfortunately, the demo needs to be delayed")
+        put_utf16(buf, 1500, "Purpose:")
+        put_utf16(buf, 1600, "Dupuis, Michael (M.C.)")
+        put_utf16(buf, 1700, "mdupuis9@ford.com")
+        # Real subject — appears twice, as in every observed instance.
+        put_utf16(buf, 1800, "NEXT Overall Forum - Friday")
+        put_utf16(buf, 1900, "Ayling, Drew (D.)")
+        put_utf16(buf, 2000, "NEXT Overall Forum - Friday")
+        put_ticks(buf, 2100, start_t)
+        put_ticks(buf, 2108, end_t)
+        self.assertEqual(hxexport.extract_title(bytes(buf)),
+                         "NEXT Overall Forum - Friday")
+
     def test_store_end_to_end(self):
         tmp = tempfile.mkdtemp(prefix="caldrop-hxexp-")
         path = os.path.join(tmp, "HxStore.hxd")
