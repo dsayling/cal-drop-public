@@ -98,6 +98,60 @@ class HxExportTests(unittest.TestCase):
         self.assertTrue(hxexport._is_tz("tzone://Microsoft/Utc"))
         self.assertFalse(hxexport._is_tz("Example/Widgets - Weekly Sync"))
 
+    def test_variant_length_appointments_export(self):
+        """Regression: the uint32 at offset 4 is a declared length that
+        does not track the payload size in real records (live
+        2026-10-30: len(payload) - u32@4 spread over
+        {4, 8, 1, 2, -4, -6, -8}; the 13:30 interview instance sits at
+        -2). Appointments in those shapes must still export: only the
+        format/type markers decide appointment-hood."""
+        shape = make_appointment_payload(self.start, self.end)
+        for delta in (2, 8, 1, -4, -6):
+            buf = bytearray(shape)
+            struct.pack_into("<I", buf, 4,
+                             (len(buf) - delta) & 0xFFFFFFFF)
+            self.assertTrue(hxexport.is_appointment(bytes(buf)), delta)
+        buf = bytearray(shape)
+        struct.pack_into("<I", buf, 4, (len(buf) - 2) & 0xFFFFFFFF)
+        tmp = tempfile.mkdtemp(prefix="caldrop-hxexp-")
+        path = os.path.join(tmp, "HxStore.hxd")
+        build_store(path, [bytes(buf),
+                           make_mail_payload(self.start, self.end)])
+        snapshot, diagnostics, code = hxexport.build_snapshot_hx(path, 14)
+        self.assertIsNotNone(snapshot, diagnostics)
+        self.assertEqual(code, 0, diagnostics)
+        self.assertEqual([e["title"] for e in snapshot["events"]],
+                         ["CALDROP-TEST-7F3A"],
+                         snapshot["events"])
+
+    def test_no_title_payload_is_skipped(self):
+        """A signature-passing record with no extractable title is
+        counted in skipped_no_title and does NOT export an "(no
+        title)" row."""
+        buf = bytearray(2200)
+        struct.pack_into("<I", buf, 0, 1)
+        struct.pack_into("<I", buf, 4, len(buf) - 4)
+        struct.pack_into("<H", buf, 29, 107)
+        start_t = hxstore._ticks(self.start.astimezone(timezone.utc))
+        end_t = hxstore._ticks(self.end.astimezone(timezone.utc))
+        put_ticks(buf, 483, start_t - 15 * 60 * hxstore.TICKS_PER_SECOND)
+        put_ticks(buf, 603, start_t)
+        put_ticks(buf, 611, end_t)
+        put_utf16(buf, 700, "US/Mountain")
+        put_utf16(buf, 900, "AB12" * 28)
+        self.assertIsNone(hxexport.extract_title(bytes(buf)))
+        tmp = tempfile.mkdtemp(prefix="caldrop-hxexp-")
+        path = os.path.join(tmp, "HxStore.hxd")
+        # Two payloads: the synthetic-store id discovery needs a
+        # majority for the primary store id (single-record stores tie
+        # 1:1 with the secondary-store page header and lose it).
+        build_store(path, [bytes(buf),
+                           make_mail_payload(self.start, self.end)])
+        snapshot, diagnostics, code = hxexport.build_snapshot_hx(path, 14)
+        self.assertEqual(snapshot["events"], [])
+        self.assertEqual(
+            diagnostics["stats"]["skipped_no_title"], 1, diagnostics)
+
     def test_exception_instance_body_line_loses_to_repeated_subject(self):
         """Regression: an edited (exception) instance of a recurring
         meeting stores the first body/agenda line as the FIRST content

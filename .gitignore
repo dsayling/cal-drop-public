@@ -9,3 +9,5 @@ export-diagnostics.json
 *.sqlite-wal
 *.sqlite-shm
 .DS_Store
+hxfind-report.json
+hxstore-report.json

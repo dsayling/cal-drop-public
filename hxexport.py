@@ -4,8 +4,15 @@ Field mapping established by differential analysis against a synthetic
 test event with known title/times (2026-10-20; see ASSUMPTIONS.md):
 
 - An appointment is a Cola object whose decompressed payload has
-  uint32 1 at offset 0, its own length-4 at offset 4, and the
-  Appointment object type (uint16 107) at offset 29.
+  uint32 1 at offset 0 and the Appointment object type (uint16 107)
+  at offset 29. The uint32 at offset 4 is a declared block length
+  that does NOT track the payload size across record shapes (live
+  2026-10-30 corpus: len(payload) - u32@4 spread over
+  {4, 8, 1, 2, -4, -6, -8}); the old ==len-4 equality silently
+  dropped every non-4 shape, so records stored in those variants
+  (interview slots, recurring meeting instances) vanished from the
+  export. The valid adjacent start/end pair, extractable title,
+  window, and dedup filters guard the relaxed gate.
 - Start and end are adjacent int64 .NET ticks (start at n, end at
   n+8), repeated identically in the record's second property block.
   The reminder is a lone tick, so it never forms a false pair.
@@ -73,9 +80,21 @@ def _peel_tz_prefix(text):
 
 
 def is_appointment(payload):
+    """Appointment-shape decision: Cola format 1 at offset 0 and object
+    type 107 (Appointment) at offset 29.
+
+    The uint32 at offset 4 is a declared block length that does NOT
+    equal payload-length minus 4 across real record shapes: the live
+    2026-10-30 corpus holds genuine appointments with
+    len(payload) - u32@4 spread over {4, 8, 1, 2, -4, -6, -8} — e.g.
+    live record 2305843009223100778 (2026-10-30 13:30 interview
+    instance) sits at -2, and Network Architecture Staff Meeting
+    instances sit at -4. Requiring the equality silently dropped every
+    non-4 shape, so a whole day's meetings vanished from the export.
+    The strong downstream filters (valid adjacent start/end pair,
+    extractable title, export window, dedup) guard the looser gate."""
     return len(payload) >= 64 and \
         struct.unpack_from("<I", payload, 0)[0] == 1 and \
-        struct.unpack_from("<I", payload, 4)[0] == len(payload) - 4 and \
         struct.unpack_from("<H", payload, 29)[0] == APPT_OBJECT_TYPE
 
 
@@ -241,6 +260,7 @@ def build_snapshot_hx(hx_path, days):
         title = extract_title(payload) or "(no title)"
         if title == "(no title)":
             stats["skipped_no_title"] += 1
+            continue
         key = (title, pair[0], pair[1])
         if key in seen:
             stats["duplicates_collapsed"] += 1

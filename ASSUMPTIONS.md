@@ -17,8 +17,15 @@ first real run tells us which ones were wrong.
    any exporter is built on this format. Appointment field layout was
    then mapped by differential analysis (a synthetic test event with
    known title/times, found with hxfind.py): an appointment record is a
-   Cola object with uint32 1 at offset 0, its own length−4 at offset 4,
-   and object type 107 (Appointment) as a uint16 at offset 29. Start
+   Cola object with uint32 1 at offset 0, a uint32 declared block
+   length at offset 4,
+   and object type 107 (Appointment) as a uint16 at offset 29. The
+   offset-4 uint32 is a declared block length only: the live
+   2026-10-30 store holds genuine appointments with
+   len(payload) − u32@4 in {4, 8, 1, 2, −4, −6, −8} (the original
+   ==len−4 equality silently dropped every other shape — a whole
+   day's meetings, including a 13:30 interview instance, never
+   reached the export). Start
    and end are adjacent int64 .NET ticks, repeated in the record's
    second property block; the reminder is a lone tick before them.
    Strings follow a fixed block order — timezone names, a hex
